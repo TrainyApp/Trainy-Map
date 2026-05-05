@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Trainy Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; }
+    #status {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font: 14px -apple-system, system-ui, sans-serif;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      max-width: 80vw;
+    }
+    #status.hidden { display: none; }
+    #status.error { background: #fde2e1; color: #8a1f1b; }
+    @media (prefers-color-scheme: dark) {
+      #status { background: rgba(30, 30, 30, 0.92); color: #eee; }
+      #status.error { background: #4a1a18; color: #ffb4b1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="status">Loading…</div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    function showStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.classList.toggle('error', isError);
+      statusEl.classList.remove('hidden');
+    }
+    function hideStatus() {
+      statusEl.classList.add('hidden');
+    }
+
+    const themes = {
+      dark:  { base: 'dark_all',  polyline: '#e6332a' },
+      light: { base: 'light_all', polyline: '#e6332a' },
+    };
+    const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+    function currentTheme() { return darkMq.matches ? themes.dark : themes.light; }
+
+    const map = L.map('map').setView([20, 0], 2);
+    let baseLayer;
+    let geoLayer;
+    function applyTheme() {
+      const t = currentTheme();
+      const next = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${t.base}/{z}/{x}/{y}{r}.png`, {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+      }).addTo(map);
+      next.bringToBack();
+      if (baseLayer) map.removeLayer(baseLayer);
+      baseLayer = next;
+      if (geoLayer) geoLayer.setStyle({ color: t.polyline });
+    }
+    applyTheme();
+    darkMq.addEventListener('change', applyTheme);
+
+    L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      subdomains: 'abc',
+      opacity: 0.3,
+      attribution: '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>'
+    }).addTo(map);
+
+    const pathMatch = location.pathname.match(/^\/([^/]+)\/?$/);
+    const id = pathMatch ? decodeURIComponent(pathMatch[1]) : new URLSearchParams(location.search).get('id');
+
+    async function resolveUsername(username) {
+      const r = await fetch(`https://rbc.trainy.app/v4/users/search?query=${encodeURIComponent(username)}`);
+      if (!r.ok) throw new Error(`User search: ${r.status} ${r.statusText}`);
+      const users = await r.json();
+      const match = users.find(u => u.username.toLowerCase() === username.toLowerCase()) || users[0];
+      if (!match) throw new Error(`No user found for @${username}`);
+      return match._id;
+    }
+
+    async function resolveUrl(id) {
+      if (!id) return 'https://rbc.trainy.app/v1/feeds/polyline?freedType=global';
+      const userId = id.startsWith('@') ? await resolveUsername(id.slice(1)) : id;
+      return `https://rbc.trainy.app/v1/users/${encodeURIComponent(userId)}/polyline`;
+    }
+
+    (async () => {
+      try {
+        const url = await resolveUrl(id);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        const geojson = await r.json();
+        geoLayer = L.geoJSON(geojson, {
+          style: { color: currentTheme().polyline, weight: 2 }
+        }).addTo(map);
+        const bounds = geoLayer.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds);
+        hideStatus();
+      } catch (err) {
+        showStatus(`Failed to load: ${err.message}`, true);
+      }
+    })();
+  </script>
+</body>
+</html>
