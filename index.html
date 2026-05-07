@@ -6,9 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link
     rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
+    href="https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.css" 
   />
   <style>
     html, body { margin: 0; height: 100%; }
@@ -38,11 +36,7 @@
   <div id="map"></div>
   <div id="status">Loading…</div>
 
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
+  <script src="https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.js"></script>
   <script>
     const statusEl = document.getElementById('status');
     function showStatus(msg, isError = false) {
@@ -61,32 +55,67 @@
     const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
     function currentTheme() { return darkMq.matches ? themes.dark : themes.light; }
 
-    const map = L.map('map', {
-      renderer: L.canvas()
-    }).setView([20, 0], 2);
-    let baseLayer;
-    let geoLayer;
+    const cartoAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+    const ormAttribution = '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>';
+
+    function basemapTiles(base) {
+      return ['a', 'b', 'c', 'd'].map(s =>
+        `https://${s}.basemaps.cartocdn.com/${base}/{z}/{x}/{y}.png`
+      );
+    }
+    const ormTiles = ['a', 'b', 'c'].map(s =>
+      `https://${s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png`
+    );
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: { version: 8, sources: {}, layers: [] },
+      center: [0, 20],
+      zoom: 2,
+      maxZoom: 19,
+    });
+
+    function addBasemap() {
+      const t = currentTheme();
+      map.addSource('basemap', {
+        type: 'raster',
+        tiles: basemapTiles(t.base),
+        tileSize: 256,
+        attribution: cartoAttribution,
+      });
+      const before = map.getLayer('orm') ? 'orm' : undefined;
+      map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' }, before);
+    }
+
     function applyTheme() {
       const t = currentTheme();
-      const next = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${t.base}/{z}/{x}/{y}{r}.png`, {
-        maxZoom: 19,
-        subdomains: 'abcd',
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-      }).addTo(map);
-      next.bringToBack();
-      if (baseLayer) map.removeLayer(baseLayer);
-      baseLayer = next;
-      if (geoLayer) geoLayer.setStyle({ color: t.polyline });
+      if (map.getLayer('basemap')) map.removeLayer('basemap');
+      if (map.getSource('basemap')) map.removeSource('basemap');
+      addBasemap();
+      if (map.getLayer('route')) {
+        map.setPaintProperty('route', 'line-color', t.polyline);
+      }
     }
-    applyTheme();
-    darkMq.addEventListener('change', applyTheme);
 
-    L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      subdomains: 'abc',
-      opacity: 0.3,
-      attribution: '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>'
-    }).addTo(map);
+    map.on('load', () => {
+      addBasemap();
+
+      map.addSource('orm', {
+        type: 'raster',
+        tiles: ormTiles,
+        tileSize: 256,
+        attribution: ormAttribution,
+      });
+      map.addLayer({
+        id: 'orm',
+        type: 'raster',
+        source: 'orm',
+        paint: { 'raster-opacity': 0.3 },
+      });
+
+      darkMq.addEventListener('change', applyTheme);
+      loadRoute();
+    });
 
     const pathMatch = location.pathname.match(/^\/([^/]+)\/?$/);
     const id = pathMatch ? decodeURIComponent(pathMatch[1]) : new URLSearchParams(location.search).get('id');
@@ -106,22 +135,49 @@
       return `https://rbc.trainy.app/v1/users/${encodeURIComponent(userId)}/polyline`;
     }
 
-    (async () => {
+    function geojsonBounds(geojson) {
+      const bounds = new maplibregl.LngLatBounds();
+      let any = false;
+      const extend = (coord) => {
+        if (typeof coord[0] === 'number' && typeof coord[1] === 'number') {
+          bounds.extend(coord);
+          any = true;
+        } else {
+          for (const c of coord) extend(c);
+        }
+      };
+      const geoms = (g) => {
+        if (!g) return;
+        if (g.type === 'GeometryCollection') g.geometries.forEach(geoms);
+        else if (g.coordinates) extend(g.coordinates);
+      };
+      if (geojson.type === 'FeatureCollection') geojson.features.forEach(f => geoms(f.geometry));
+      else if (geojson.type === 'Feature') geoms(geojson.geometry);
+      else geoms(geojson);
+      return any ? bounds : null;
+    }
+
+    async function loadRoute() {
       try {
         const url = await resolveUrl(id);
         const r = await fetch(url);
         if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
         const geojson = await r.json();
-        geoLayer = L.geoJSON(geojson, {
-          style: { color: currentTheme().polyline, weight: 2 }
-        }).addTo(map);
-        const bounds = geoLayer.getBounds();
-        if (bounds.isValid()) map.fitBounds(bounds);
+        const t = currentTheme();
+        map.addSource('route', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'route',
+          type: 'line',
+          source: 'route',
+          paint: { 'line-color': t.polyline, 'line-width': 2 },
+        });
+        const bounds = geojsonBounds(geojson);
+        if (bounds) map.fitBounds(bounds, { padding: 20, animate: true });
         hideStatus();
       } catch (err) {
         showStatus(`Failed to load: ${err.message}`, true);
       }
-    })();
+    }
   </script>
 </body>
 </html>
