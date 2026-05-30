@@ -114,8 +114,9 @@
       loadRoute();
     });
 
+    const searchParams = new URLSearchParams(location.search);
     const pathMatch = location.pathname.match(/^\/([^/]+)\/?$/);
-    const id = pathMatch ? decodeURIComponent(pathMatch[1]) : new URLSearchParams(location.search).get('id');
+    const id = pathMatch ? decodeURIComponent(pathMatch[1]) : searchParams.get('id');
 
     async function resolveUsername(username) {
       const r = await fetch(`https://rbc.trainy.app/v4/users/search?query=${encodeURIComponent(username)}`);
@@ -127,9 +128,15 @@
     }
 
     async function resolveUrl(id) {
-      if (!id) return 'https://rbc.trainy.app/v1/feeds/polyline?freedType=global';
-      const userId = id.startsWith('@') ? await resolveUsername(id.slice(1)) : id;
-      return `https://rbc.trainy.app/v1/users/${encodeURIComponent(userId)}/polyline`;
+      const url = new URL(
+        id
+          ? `https://rbc.trainy.app/v1/users/${encodeURIComponent(id.startsWith('@') ? await resolveUsername(id.slice(1)) : id)}/polyline`
+          : 'https://rbc.trainy.app/v1/feeds/polyline?freedType=global'
+      );
+      if (searchParams.has('requireQuality')) {
+        url.searchParams.set('requireQuality', searchParams.get('requireQuality'));
+      }
+      return url.toString();
     }
 
     function geojsonBounds(geojson) {
