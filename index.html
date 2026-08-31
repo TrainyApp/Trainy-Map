@@ -6,36 +6,185 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link
     rel="stylesheet"
-    href="https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.css" 
+    href="https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.css"
   />
   <style>
-    html, body { margin: 0; height: 100%; }
+    html, body { margin: 0; height: 100%; background: #101116; }
     #map { position: absolute; inset: 0; }
-    #status {
+    .plate {
       position: absolute;
-      top: 10px;
+      z-index: 1000;
+      background: rgba(16, 17, 22, 0.78);
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      color: #f2f3f0;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    }
+    #status {
+      top: 12px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 1000;
-      background: rgba(255, 255, 255, 0.92);
-      padding: 8px 14px;
-      border-radius: 6px;
-      font: 14px -apple-system, system-ui, sans-serif;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      padding: 8px 14px 8px 30px;
+      font: 500 13px/1.2 -apple-system, system-ui, sans-serif;
+      letter-spacing: 0.01em;
       max-width: 80vw;
     }
+    #status::before {
+      content: '';
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      margin-top: -4px;
+      border-radius: 50%;
+      background: #9a9da5;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
     #status.hidden { display: none; }
-    #status.error { background: #fde2e1; color: #8a1f1b; }
-    @media (prefers-color-scheme: dark) {
-      #status { background: rgba(30, 30, 30, 0.92); color: #eee; }
-      #status.error { background: #4a1a18; color: #ffb4b1; }
+    #status.error { border-color: rgba(240, 82, 82, 0.4); color: #ffb4b1; }
+    #status.error::before { background: #f05252; animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #status::before { animation: none; }
+      #legend,
+      #legend .legend-cursor { transition: none; }
+    }
+    #legend {
+      bottom: 24px;
+      left: 12px;
+      padding: 14px 16px;
+      transition: opacity 400ms ease, transform 400ms ease;
+    }
+    #legend.hidden {
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+    }
+    #legend .legend-user {
+      font: 600 15px -apple-system, system-ui, sans-serif;
+      letter-spacing: 0.01em;
+      margin-bottom: 8px;
+    }
+    #legend .legend-stat {
+      font: 400 12px -apple-system, system-ui, sans-serif;
+      font-variant-numeric: tabular-nums;
+      color: #9a9da5;
+      margin-top: 5px;
+    }
+    #legend .legend-stat .v {
+      color: #f2f3f0;
+      font-weight: 500;
+    }
+    #legend .legend-divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 8px -16px;
+    }
+    #legend .legend-title {
+      font: 600 10px -apple-system, system-ui, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #9a9da5;
+      margin-bottom: 12px;
+    }
+    #legend .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+      font: 500 12px -apple-system, system-ui, sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+    #legend .legend-swatch {
+      width: 22px;
+      border-radius: 2px;
+      flex: none;
+    }
+    #legend .legend-scale {
+      display: flex;
+      gap: 12px;
+      height: 140px;
+      margin-top: 4px;
+    }
+    #legend .legend-bar {
+      position: relative;
+      width: 10px;
+      border-radius: 5px;
+      flex: none;
+    }
+    #legend .legend-cursor {
+      position: absolute;
+      left: -3px;
+      right: -3px;
+      height: 3px;
+      border-radius: 1.5px;
+      background: #ffffff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+      transform: translateY(50%);
+      transition: bottom 80ms linear, opacity 150ms ease;
+      pointer-events: none;
+    }
+    #legend .legend-cursor.hidden { opacity: 0; }
+    #legend .legend-labels {
+      position: relative;
+      min-width: 40px;
+    }
+    #legend .legend-labels span {
+      position: absolute;
+      left: 0;
+      transform: translateY(50%);
+      font: 500 11px -apple-system, system-ui, sans-serif;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    #legend .legend-labels span::before {
+      content: '';
+      position: absolute;
+      left: -14px;
+      top: 50%;
+      width: 10px;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.28);
+    }
+    #legend .legend-hint {
+      margin-top: 2px;
+      margin-bottom: 12px;
+      font: 400 8px -apple-system, system-ui, sans-serif;
+      color: #9a9da5;
+    }
+    .count-popup .maplibregl-popup-content {
+      background: rgba(16, 17, 22, 0.88);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 4px 9px;
+      font: 600 12px -apple-system, system-ui, sans-serif;
+      font-variant-numeric: tabular-nums;
+      color: #f2f3f0;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    }
+    .count-popup .maplibregl-popup-tip { display: none; }
+    .maplibregl-ctrl-attrib {
+      background: rgba(16, 17, 22, 0.7);
+      font: 10px -apple-system, system-ui, sans-serif;
+    }
+    .maplibregl-ctrl-attrib,
+    .maplibregl-ctrl-attrib a {
+      color: #9a9da5;
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="status">Loading…</div>
-
+  <div id="status" class="plate">Loading tracks…</div>
+  <div id="legend" class="plate hidden"></div>
   <script src="https://unpkg.com/maplibre-gl@^5.24.0/dist/maplibre-gl.js"></script>
   <script>
     const statusEl = document.getElementById('status');
@@ -48,16 +197,8 @@
       statusEl.classList.add('hidden');
     }
 
-    const themes = {
-      dark:  { base: 'dark_all',  polyline: '#e6332a' },
-      light: { base: 'light_all', polyline: '#e6332a' },
-    };
-    const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
-    function currentTheme() { return darkMq.matches ? themes.dark : themes.light; }
-
-    const cartoAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+    const RAMP = ['#423c81', '#33628d', '#25858d', '#26a584', '#53c468', '#a5da35', '#fde725'];
     const ormAttribution = '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>';
-
     const map = new maplibregl.Map({
       container: 'map',
       style: 'https://tiles.openfreemap.org/styles/dark',
@@ -65,17 +206,6 @@
       zoom: 2,
       maxZoom: 19,
     });
-
-    function applyTheme() {
-      const t = currentTheme();
-      if (map.getLayer('basemap')) map.removeLayer('basemap');
-      if (map.getSource('basemap')) map.removeSource('basemap');
-      addBasemap();
-      if (map.getLayer('route')) {
-        map.setPaintProperty('route', 'line-color', t.polyline);
-      }
-    }
-
     map.on('load', () => {
       map.addSource('orm', {
         type: 'raster',
@@ -87,23 +217,28 @@
         id: 'orm',
         type: 'raster',
         source: 'orm',
-        paint: { 'raster-opacity': 0.3 },
+        paint: { 'raster-opacity': 0.05 },
       });
-
-      darkMq.addEventListener('change', applyTheme);
       loadRoute();
     });
-
     const searchParams = new URLSearchParams(location.search);
     const pathMatch = location.pathname.match(/^\/([^/]+)\/?$/);
     const id = pathMatch ? decodeURIComponent(pathMatch[1]) : searchParams.get('id');
-
+    const USER_ID_TTL = 24 * 60 * 60 * 1000;
     async function resolveUsername(username) {
+      const cacheKey = `trainy-user:${username.toLowerCase()}`;
+      try {
+        const cached = JSON.parse(localStorage.getItem(cacheKey));
+        if (cached && Date.now() - cached.at < USER_ID_TTL) return cached.id;
+      } catch {}
       const r = await fetch(`https://rbc.trainy.app/v4/users/search?query=${encodeURIComponent(username)}`);
       if (!r.ok) throw new Error(`User search: ${r.status} ${r.statusText}`);
       const users = await r.json();
       const match = users.find(u => u.username.toLowerCase() === username.toLowerCase()) || users[0];
       if (!match) throw new Error(`No user found for @${username}`);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ id: match._id, at: Date.now() }));
+      } catch {}
       return match._id;
     }
 
@@ -118,7 +253,6 @@
       }
       return url.toString();
     }
-
     function geojsonBounds(geojson) {
       const bounds = new maplibregl.LngLatBounds();
       let any = false;
@@ -140,24 +274,324 @@
       else geoms(geojson);
       return any ? bounds : null;
     }
+    function extractLines(geojson, out = []) {
+      if (!geojson) return out;
+      switch (geojson.type) {
+        case 'FeatureCollection': geojson.features.forEach(f => extractLines(f, out)); break;
+        case 'Feature': extractLines(geojson.geometry, out); break;
+        case 'GeometryCollection': geojson.geometries.forEach(g => extractLines(g, out)); break;
+        case 'LineString': out.push(geojson.coordinates); break;
+        case 'MultiLineString': out.push(...geojson.coordinates); break;
+      }
+      return out;
+    }
 
-    async function loadRoute() {
+    let maxCount = 0;
+    let stats = { trackKm: 0, riddenKm: 0, trips: 0 };
+    function segLenKm(a, b) {
+      const R = 6371, toRad = Math.PI / 180;
+      const dLat = (b[1] - a[1]) * toRad, dLng = (b[0] - a[0]) * toRad;
+      const s = Math.sin(dLat / 2) ** 2
+        + Math.cos(a[1] * toRad) * Math.cos(b[1] * toRad) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(s));
+    }
+    function segmentKey(a, b) {
+      const ax = Math.round(a[0] * 1e5), ay = Math.round(a[1] * 1e5);
+      const bx = Math.round(b[0] * 1e5), by = Math.round(b[1] * 1e5);
+      if (ax === bx && ay === by) return null;
+      return (ax < bx || (ax === bx && ay < by))
+        ? `${ax},${ay}|${bx},${by}`
+        : `${bx},${by}|${ax},${ay}`;
+    }
+    function countSegments(geojson) {
+      const lines = extractLines(geojson);
+      const counts = new Map();
+      for (const line of lines) {
+        for (let i = 1; i < line.length; i++) {
+          const k = segmentKey(line[i - 1], line[i]);
+          if (k) counts.set(k, (counts.get(k) || 0) + 1);
+        }
+      }
+      maxCount = 1;
+      for (const c of counts.values()) if (c > maxCount) maxCount = c;
+      const emitted = new Set();
+      const features = [];
+      let trackKm = 0, riddenKm = 0;
+      for (const line of lines) {
+        let run = null;
+        const flush = () => {
+          if (run) features.push({
+            type: 'Feature',
+            properties: { count: run.count },
+            geometry: { type: 'LineString', coordinates: run.coords },
+          });
+          run = null;
+        };
+        for (let i = 1; i < line.length; i++) {
+          const k = segmentKey(line[i - 1], line[i]);
+          if (!k || emitted.has(k)) { flush(); continue; }
+          emitted.add(k);
+          const count = counts.get(k);
+          const len = segLenKm(line[i - 1], line[i]);
+          trackKm += len;
+          riddenKm += len * count;
+          if (run && run.count === count) {
+            run.coords.push(line[i]);
+          } else {
+            flush();
+            run = { count, coords: [line[i - 1], line[i]] };
+          }
+        }
+        flush();
+      }
+      stats = { trackKm, riddenKm, trips: lines.length };
+      return { type: 'FeatureCollection', features };
+    }
+
+    function rampColorExpr() {
+      if (maxCount <= 1) return RAMP[0];
+      const lnMax = Math.log(maxCount);
+      return ['interpolate', ['linear'], ['ln', ['get', 'count']],
+        ...RAMP.flatMap((c, i) => [i / (RAMP.length - 1) * lnMax, c])];
+    }
+    function widthExpr() {
+      if (maxCount <= 1) return 2.5;
+      return ['interpolate', ['linear'], ['ln', ['get', 'count']], 0, 2, Math.log(maxCount), 5];
+    }
+    function legendTicks() {
+      const candidates = [1, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000];
+      const ticks = candidates.filter(v => v < maxCount);
+      while (ticks.length && Math.log(maxCount) - Math.log(ticks[ticks.length - 1]) < 0.25) ticks.pop();
+      ticks.push(maxCount);
+      return ticks;
+    }
+    function makeEl(cls, text) {
+      const el = document.createElement('div');
+      el.className = cls;
+      if (text != null) el.textContent = text;
+      return el;
+    }
+    function renderLegend() {
+      const legend = document.getElementById('legend');
+      legend.innerHTML = '';
+      const displayName = id
+        ? (id.startsWith('@') ? id : 'Trainy Map')
+        : 'Global feed';
+      legend.appendChild(makeEl('legend-user', displayName));
+      const fmt = (n) => Math.round(n).toLocaleString('en');
+      const stat = (value, label) => {
+        const row = makeEl('legend-stat');
+        const v = document.createElement('span');
+        v.className = 'v';
+        v.textContent = value;
+        row.append(v, ` ${label}`);
+        return row;
+      };
+      legend.appendChild(stat(`${fmt(stats.trackKm)} km`, 'of track'));
+      legend.appendChild(stat(`${fmt(stats.riddenKm)} km`, 'ridden'));
+      legend.appendChild(stat(fmt(stats.trips), stats.trips === 1 ? 'trip' : 'trips'));
+      legend.appendChild(makeEl('legend-divider'));
+      legend.appendChild(makeEl('legend-title', 'Times traveled'));
+      if (maxCount <= 1) {
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-swatch';
+        swatch.style.background = RAMP[0];
+        swatch.style.height = '3px';
+        const label = document.createElement('span');
+        label.textContent = '1×';
+        row.append(swatch, label);
+        legend.appendChild(row);
+      } else {
+        const scale = document.createElement('div');
+        scale.className = 'legend-scale';
+        const bar = document.createElement('div');
+        bar.className = 'legend-bar';
+        bar.style.background = `linear-gradient(to top, ${RAMP.join(', ')})`;
+        const cursor = document.createElement('div');
+        cursor.id = 'legend-cursor';
+        cursor.className = 'legend-cursor hidden';
+        bar.appendChild(cursor);
+        const labels = document.createElement('div');
+        labels.className = 'legend-labels';
+        for (const v of legendTicks()) {
+          const tick = document.createElement('span');
+          tick.textContent = `${v}×`;
+          tick.style.bottom = `${Math.log(v) / Math.log(maxCount) * 100}%`;
+          labels.appendChild(tick);
+        }
+        scale.append(bar, labels);
+        legend.appendChild(scale);
+      }
+      legend.classList.remove('hidden');
+    }
+    const POLYLINE_CACHE = 'trainy-polylines-v1';
+
+    async function readPolylineCache(url) {
       try {
-        const url = await resolveUrl(id);
-        const r = await fetch(url);
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-        const geojson = await r.json();
-        const t = currentTheme();
-        map.addSource('route', { type: 'geojson', data: geojson });
+        const cache = await caches.open(POLYLINE_CACHE);
+        const hit = await cache.match(url);
+        return hit ? await hit.text() : null;
+      } catch {
+        return null;
+      }
+    }
+    async function writePolylineCache(url, text) {
+      try {
+        const cache = await caches.open(POLYLINE_CACHE);
+        await cache.put(url, new Response(text, {
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      } catch {}
+    }
+
+    function tracerGradient(p) {
+      const tip = Math.min(Math.max(p, 0.0001), 1);
+      const head = 0.04 * (1 - tip);
+      if (head < 0.001) {
+        return ['step', ['line-progress'], '#ffffff', 1, '#ffffff'];
+      }
+      return ['interpolate', ['linear'], ['line-progress'],
+        Math.max(tip - head, 0), '#ffffff', tip, 'rgba(255,255,255,0)'];
+    }
+    function startDrawAnimation(tripsGeojson, duration = 1600) {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const showRoute = () => {
+        try { map.setPaintProperty('route', 'line-opacity', 1); } catch {}
+      };
+      try {
+        map.setPaintProperty('route', 'line-opacity-transition', { duration: 0 });
+        map.setPaintProperty('route', 'line-opacity', 0);
+        map.addSource('trips', { type: 'geojson', data: tripsGeojson, lineMetrics: true });
+        map.addLayer({
+          id: 'route-tracer',
+          type: 'line',
+          source: 'trips',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-width': 2.5,
+            'line-opacity': 0.9,
+            'line-gradient': tracerGradient(0),
+          },
+        });
+      } catch {
+        showRoute();
+        return;
+      }
+      let started = false;
+      const run = () => {
+        if (started) return;
+        started = true;
+        let start = null;
+        const ease = (t) => 1 - (1 - t) ** 3;
+        const frame = (now) => {
+          if (start === null) start = now;
+          const t = Math.min((now - start) / duration, 1);
+          try {
+            map.setPaintProperty('route-tracer', 'line-gradient', tracerGradient(ease(t)));
+          } catch {
+            showRoute();
+            return;
+          }
+          if (t < 1) {
+            requestAnimationFrame(frame);
+            return;
+          }
+          setTimeout(() => {
+            map.setPaintProperty('route', 'line-opacity-transition', { duration: 500 });
+            showRoute();
+            map.setPaintProperty('route-tracer', 'line-opacity-transition', { duration: 500 });
+            map.setPaintProperty('route-tracer', 'line-opacity', 0);
+            setTimeout(() => {
+              if (map.getLayer('route-tracer')) map.removeLayer('route-tracer');
+              if (map.getSource('trips')) map.removeSource('trips');
+            }, 600);
+          }, 250);
+        };
+        requestAnimationFrame(frame);
+      };
+      map.once('idle', run);
+      setTimeout(run, 4000);
+    }
+
+    function renderRoute(geojson, fit) {
+      const segmented = countSegments(geojson);
+      if (map.getSource('route')) {
+        map.getSource('route').setData(segmented);
+        map.setPaintProperty('route', 'line-color', rampColorExpr());
+        map.setPaintProperty('route', 'line-width', widthExpr());
+      } else {
+        map.addSource('route', { type: 'geojson', data: segmented, lineMetrics: true });
         map.addLayer({
           id: 'route',
           type: 'line',
           source: 'route',
-          paint: { 'line-color': t.polyline, 'line-width': 2 },
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round',
+            'line-sort-key': ['get', 'count'],
+          },
+          paint: {
+            'line-color': rampColorExpr(),
+            'line-width': widthExpr(),
+          },
         });
+        startDrawAnimation(geojson);
+        const popup = new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          className: 'count-popup',
+        });
+        map.on('mousemove', 'route', (e) => {
+          map.getCanvas().style.cursor = 'crosshair';
+          const count = e.features[0].properties.count;
+          popup.setLngLat(e.lngLat).setText(`${count}×`).addTo(map);
+          const cursor = document.getElementById('legend-cursor');
+          if (cursor && maxCount > 1) {
+            cursor.style.bottom = `${Math.log(count) / Math.log(maxCount) * 100}%`;
+            cursor.classList.remove('hidden');
+          }
+        });
+        map.on('mouseleave', 'route', () => {
+          map.getCanvas().style.cursor = '';
+          popup.remove();
+          const cursor = document.getElementById('legend-cursor');
+          if (cursor) cursor.classList.add('hidden');
+        });
+      }
+      renderLegend();
+      if (fit) {
         const bounds = geojsonBounds(geojson);
         if (bounds) map.fitBounds(bounds, { padding: 20, animate: true });
-        hideStatus();
+      }
+    }
+    async function loadRoute() {
+      try {
+        const url = await resolveUrl(id);
+        const cachedText = await readPolylineCache(url);
+        let rendered = false;
+        if (cachedText) {
+          try {
+            renderRoute(JSON.parse(cachedText), true);
+            rendered = true;
+            hideStatus();
+          } catch {}
+        }
+        try {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+          const text = await r.text();
+          if (text !== cachedText) {
+            renderRoute(JSON.parse(text), !rendered);
+            writePolylineCache(url, text);
+          }
+          hideStatus();
+        } catch (err) {
+          if (!rendered) throw err;
+          showStatus('Offline: showing saved tracks');
+          setTimeout(hideStatus, 4000);
+        }
       } catch (err) {
         showStatus(`Failed to load: ${err.message}`, true);
       }
