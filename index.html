@@ -312,21 +312,49 @@
         + Math.cos(a[1] * toRad) * Math.cos(b[1] * toRad) * Math.sin(dLng / 2) ** 2;
       return 2 * R * Math.asin(Math.sqrt(s));
     }
+
+    const SNAP_TOL_M = 6;
+    const CELLS_PER_DEG = 1.4e4;
+    function makeSnapper() {
+      const cells = new Map();
+      const pos = [];
+      const snap = (p) => {
+        const kx = Math.max(Math.cos(p[1] * Math.PI / 180), 0.01);
+        const cx = Math.round(p[0] * CELLS_PER_DEG * kx);
+        const cy = Math.round(p[1] * CELLS_PER_DEG);
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const bucket = cells.get(`${cx + dx},${cy + dy}`);
+            if (!bucket) continue;
+            for (const n of bucket) {
+              if (segLenKm(pos[n], p) * 1000 < SNAP_TOL_M) return n;
+            }
+          }
+        }
+        const id = pos.push(p) - 1;
+        const key = `${cx},${cy}`;
+        const bucket = cells.get(key);
+        if (bucket) bucket.push(id);
+        else cells.set(key, [id]);
+        return id;
+      };
+      return { snap, pos };
+    }
     function segmentKey(a, b) {
-      const ax = Math.round(a[0] * 1.4e4), ay = Math.round(a[1] * 1.4e4);
-      const bx = Math.round(b[0] * 1.4e4), by = Math.round(b[1] * 1.4e4);
-      if (ax === bx && ay === by) return null;
-      return (ax < bx || (ax === bx && ay < by))
-        ? `${ax},${ay}|${bx},${by}`
-        : `${bx},${by}|${ax},${ay}`;
+      if (a === b) return null;
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
     }
     function countSegments(geojson) {
-      const lines = extractLines(geojson);
+      const { snap, pos } = makeSnapper();
+      const lines = extractLines(geojson).map(line => ({
+        count: line.count,
+        nodes: line.coords.map(snap),
+      }));
       const counts = new Map();
       for (const line of lines) {
-        const coords = line.coords;
-        for (let i = 1; i < coords.length; i++) {
-          const k = segmentKey(coords[i - 1], coords[i]);
+        const nodes = line.nodes;
+        for (let i = 1; i < nodes.length; i++) {
+          const k = segmentKey(nodes[i - 1], nodes[i]);
           if (k) counts.set(k, (counts.get(k) || 0) + line.count);
         }
       }
@@ -336,7 +364,7 @@
       const features = [];
       let trackKm = 0, riddenKm = 0;
       for (const line of lines) {
-        const coords = line.coords;
+        const nodes = line.nodes;
         let run = null;
         const flush = () => {
           if (run) features.push({
@@ -346,19 +374,20 @@
           });
           run = null;
         };
-        for (let i = 1; i < coords.length; i++) {
-          const k = segmentKey(coords[i - 1], coords[i]);
+        for (let i = 1; i < nodes.length; i++) {
+          const k = segmentKey(nodes[i - 1], nodes[i]);
           if (!k || emitted.has(k)) { flush(); continue; }
           emitted.add(k);
           const count = counts.get(k);
-          const len = segLenKm(coords[i - 1], coords[i]);
+          const a = pos[nodes[i - 1]], b = pos[nodes[i]];
+          const len = segLenKm(a, b);
           trackKm += len;
           riddenKm += len * count;
           if (run && run.count === count) {
-            run.coords.push(coords[i]);
+            run.coords.push(b);
           } else {
             flush();
-            run = { count, coords: [coords[i - 1], coords[i]] };
+            run = { count, coords: [a, b] };
           }
         }
         flush();
@@ -587,7 +616,7 @@
     }
     async function loadRoute() {
       try {
-        const url = await resolveUrl(id);
+        const url = await resolveUrl("@liam");
         const cachedText = await readPolylineCache(url);
         let rendered = false;
         if (cachedText) {
