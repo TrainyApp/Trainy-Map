@@ -57,32 +57,14 @@
 
     const cartoAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
     const ormAttribution = '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>';
-    
-    function basemapTiles(base) {
-      return ['a', 'b', 'c', 'd'].map(s =>
-        `https://${s}.basemaps.cartocdn.com/${base}/{z}/{x}/{y}.png`
-      );
-    }
 
     const map = new maplibregl.Map({
       container: 'map',
-      style: { version: 8, sources: {}, layers: [] },
+      style: 'https://tiles.openfreemap.org/styles/dark',
       center: [0, 20],
       zoom: 2,
       maxZoom: 19,
     });
-
-    function addBasemap() {
-      const t = currentTheme();
-      map.addSource('basemap', {
-        type: 'raster',
-        tiles: basemapTiles(t.base),
-        tileSize: 256,
-        attribution: cartoAttribution,
-      });
-      const before = map.getLayer('orm') ? 'orm' : undefined;
-      map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' }, before);
-    }
 
     function applyTheme() {
       const t = currentTheme();
@@ -95,8 +77,6 @@
     }
 
     map.on('load', () => {
-      addBasemap();
-
       map.addSource('orm', {
         type: 'raster',
         tiles: [`https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png`],
