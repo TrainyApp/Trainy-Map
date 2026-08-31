@@ -313,8 +313,8 @@
       return 2 * R * Math.asin(Math.sqrt(s));
     }
     function segmentKey(a, b) {
-      const ax = Math.round(a[0] * 1e5), ay = Math.round(a[1] * 1e5);
-      const bx = Math.round(b[0] * 1e5), by = Math.round(b[1] * 1e5);
+      const ax = Math.round(a[0] * 1.4e4), ay = Math.round(a[1] * 1.4e4);
+      const bx = Math.round(b[0] * 1.4e4), by = Math.round(b[1] * 1.4e4);
       if (ax === bx && ay === by) return null;
       return (ax < bx || (ax === bx && ay < by))
         ? `${ax},${ay}|${bx},${by}`
