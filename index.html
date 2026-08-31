@@ -274,16 +274,33 @@
       else geoms(geojson);
       return any ? bounds : null;
     }
-    function extractLines(geojson, out = []) {
+    function featureCount(feature) {
+      const n = Number(feature.properties && feature.properties.count);
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    }
+
+    function extractLines(geojson, out = [], count = 1) {
       if (!geojson) return out;
       switch (geojson.type) {
-        case 'FeatureCollection': geojson.features.forEach(f => extractLines(f, out)); break;
-        case 'Feature': extractLines(geojson.geometry, out); break;
-        case 'GeometryCollection': geojson.geometries.forEach(g => extractLines(g, out)); break;
-        case 'LineString': out.push(geojson.coordinates); break;
-        case 'MultiLineString': out.push(...geojson.coordinates); break;
+        case 'FeatureCollection': geojson.features.forEach(f => extractLines(f, out, count)); break;
+        case 'Feature': extractLines(geojson.geometry, out, featureCount(geojson)); break;
+        case 'GeometryCollection': geojson.geometries.forEach(g => extractLines(g, out, count)); break;
+        case 'LineString': out.push({ coords: geojson.coordinates, count }); break;
+        case 'MultiLineString': geojson.coordinates.forEach(c => out.push({ coords: c, count })); break;
       }
       return out;
+    }
+
+    function countTrips(geojson) {
+      if (!geojson) return 0;
+      switch (geojson.type) {
+        case 'FeatureCollection': return geojson.features.reduce((s, f) => s + countTrips(f), 0);
+        case 'Feature': return featureCount(geojson);
+        case 'GeometryCollection': return geojson.geometries.reduce((s, g) => s + countTrips(g), 0);
+        case 'LineString': return 1;
+        case 'MultiLineString': return geojson.coordinates.length;
+        default: return 0;
+      }
     }
 
     let maxCount = 0;
@@ -307,9 +324,10 @@
       const lines = extractLines(geojson);
       const counts = new Map();
       for (const line of lines) {
-        for (let i = 1; i < line.length; i++) {
-          const k = segmentKey(line[i - 1], line[i]);
-          if (k) counts.set(k, (counts.get(k) || 0) + 1);
+        const coords = line.coords;
+        for (let i = 1; i < coords.length; i++) {
+          const k = segmentKey(coords[i - 1], coords[i]);
+          if (k) counts.set(k, (counts.get(k) || 0) + line.count);
         }
       }
       maxCount = 1;
@@ -318,6 +336,7 @@
       const features = [];
       let trackKm = 0, riddenKm = 0;
       for (const line of lines) {
+        const coords = line.coords;
         let run = null;
         const flush = () => {
           if (run) features.push({
@@ -327,24 +346,24 @@
           });
           run = null;
         };
-        for (let i = 1; i < line.length; i++) {
-          const k = segmentKey(line[i - 1], line[i]);
+        for (let i = 1; i < coords.length; i++) {
+          const k = segmentKey(coords[i - 1], coords[i]);
           if (!k || emitted.has(k)) { flush(); continue; }
           emitted.add(k);
           const count = counts.get(k);
-          const len = segLenKm(line[i - 1], line[i]);
+          const len = segLenKm(coords[i - 1], coords[i]);
           trackKm += len;
           riddenKm += len * count;
           if (run && run.count === count) {
-            run.coords.push(line[i]);
+            run.coords.push(coords[i]);
           } else {
             flush();
-            run = { count, coords: [line[i - 1], line[i]] };
+            run = { count, coords: [coords[i - 1], coords[i]] };
           }
         }
         flush();
       }
-      stats = { trackKm, riddenKm, trips: lines.length };
+      stats = { trackKm, riddenKm, trips: countTrips(geojson) };
       return { type: 'FeatureCollection', features };
     }
 
