@@ -133,11 +133,12 @@
     #legend .legend-cursor.hidden { opacity: 0; }
     #legend .legend-labels {
       position: relative;
-      min-width: 40px;
+      min-width: 46px;
     }
     #legend .legend-labels span {
       position: absolute;
       left: 0;
+      white-space: nowrap;
       transform: translateY(50%);
       font: 500 11px -apple-system, system-ui, sans-serif;
       font-variant-numeric: tabular-nums;
@@ -146,9 +147,9 @@
     #legend .legend-labels span::before {
       content: '';
       position: absolute;
-      left: -14px;
+      left: -10px;
       top: 50%;
-      width: 10px;
+      width: 6px;
       height: 1px;
       background: rgba(255, 255, 255, 0.28);
     }
@@ -195,6 +196,51 @@
       cursor: pointer;
     }
     #settings input { accent-color: #e6332a; }
+    #search {
+      top: 12px;
+      left: 12px;
+      width: 220px;
+      overflow: hidden;
+    }
+    #search input {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      background: transparent;
+      border: 0;
+      outline: none;
+      color: #f2f3f0;
+      padding: 9px 12px;
+      font: 500 13px -apple-system, system-ui, sans-serif;
+    }
+    #search input::placeholder { color: #9a9da5; }
+    #search .results { display: none; }
+    #search.open .results {
+      display: block;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    #search .result {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      padding: 7px 12px;
+      cursor: pointer;
+      font: 500 13px -apple-system, system-ui, sans-serif;
+    }
+    #search .result.active,
+    #search .result:hover { background: rgba(255, 255, 255, 0.07); }
+    #search .result .sub {
+      font-weight: 400;
+      font-size: 11px;
+      color: #9a9da5;
+    }
+    #search .note {
+      padding: 7px 12px;
+      font: 400 12px -apple-system, system-ui, sans-serif;
+      color: #9a9da5;
+    }
     .count-popup .maplibregl-popup-content {
       background: rgba(16, 17, 22, 0.88);
       -webkit-backdrop-filter: blur(8px);
@@ -221,6 +267,10 @@
 <body>
   <div id="map"></div>
   <div id="status" class="plate">Loading tracks…</div>
+  <div id="search" class="plate">
+    <input type="text" placeholder="Search profile…" autocomplete="off" spellcheck="false" />
+    <div class="results"></div>
+  </div>
   <div id="legend" class="plate hidden"></div>
   <button id="settings-btn" class="plate" aria-label="Settings">⚙</button>
   <div id="settings" class="plate hidden">
@@ -320,21 +370,28 @@
     const searchParams = new URLSearchParams(location.search);
     const pathMatch = location.pathname.match(/^\/([^/]+)\/?$/);
     const id = pathMatch ? decodeURIComponent(pathMatch[1]) : searchParams.get('id');
+    // null = global feed, otherwise a user id or "@username"
+    let currentId = id;
     const USER_ID_TTL = 24 * 60 * 60 * 1000;
-    async function resolveUsername(username) {
-      const cacheKey = `trainy-user:${username.toLowerCase()}`;
+    function cacheUserId(username, userId) {
       try {
-        const cached = JSON.parse(localStorage.getItem(cacheKey));
+        localStorage.setItem(`trainy-user:${username.toLowerCase()}`, JSON.stringify({ id: userId, at: Date.now() }));
+      } catch {}
+    }
+    async function searchUsers(query) {
+      const r = await fetch(`https://rbc.trainy.app/v4/users/search?query=${encodeURIComponent(query)}`);
+      if (!r.ok) throw new Error(`User search: ${r.status} ${r.statusText}`);
+      return await r.json();
+    }
+    async function resolveUsername(username) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(`trainy-user:${username.toLowerCase()}`));
         if (cached && Date.now() - cached.at < USER_ID_TTL) return cached.id;
       } catch {}
-      const r = await fetch(`https://rbc.trainy.app/v4/users/search?query=${encodeURIComponent(username)}`);
-      if (!r.ok) throw new Error(`User search: ${r.status} ${r.statusText}`);
-      const users = await r.json();
+      const users = await searchUsers(username);
       const match = users.find(u => u.username.toLowerCase() === username.toLowerCase()) || users[0];
       if (!match) throw new Error(`No user found for @${username}`);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify({ id: match._id, at: Date.now() }));
-      } catch {}
+      cacheUserId(username, match._id);
       return match._id;
     }
 
@@ -401,66 +458,82 @@
 
     let maxCount = 0;
     let stats = { trackKm: 0, riddenKm: 0, trips: 0 };
-    function segLenKm(a, b) {
-      const R = 6371, toRad = Math.PI / 180;
-      const dLat = (b[1] - a[1]) * toRad, dLng = (b[0] - a[0]) * toRad;
-      const s = Math.sin(dLat / 2) ** 2
-        + Math.cos(a[1] * toRad) * Math.cos(b[1] * toRad) * Math.sin(dLng / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(s));
-    }
-
+    const KM_PER_DEG = 6371 * Math.PI / 180;
+    const RAD = Math.PI / 180;
     const SNAP_TOL_M = 6;
+    const SNAP_TOL_DEG2 = (SNAP_TOL_M / 1000 / KM_PER_DEG) ** 2;
     const CELLS_PER_DEG = 1.4e4;
-    function makeSnapper() {
-      const cells = new Map();
-      const pos = [];
-      const snap = (p) => {
-        const kx = Math.max(Math.cos(p[1] * Math.PI / 180), 0.01);
-        const cx = Math.round(p[0] * CELLS_PER_DEG * kx);
-        const cy = Math.round(p[1] * CELLS_PER_DEG);
-        for (let dx = -1; dx <= 1; dx++) {
-          for (let dy = -1; dy <= 1; dy++) {
-            const bucket = cells.get(`${cx + dx},${cy + dy}`);
-            if (!bucket) continue;
-            for (const n of bucket) {
-              if (segLenKm(pos[n], p) * 1000 < SNAP_TOL_M) return n;
+    const CELL_ROW = 4194304;
+    const NODE_ROW = 67108864;
+    const NEIGHBORS = [0, 0, -1, -1, -1, 0, -1, 1, 0, -1, 0, 1, 1, -1, 1, 0, 1, 1];
+
+    function snapNodes(lines, total) {
+      const nodes = new Int32Array(total);
+      const head = new Map();
+      let cap = Math.min(Math.max(total, 1), 1024);
+      let px = new Float64Array(cap), py = new Float64Array(cap), next = new Int32Array(cap);
+      let count = 0, cursor = 0;
+      for (const line of lines) {
+        const coords = line.coords;
+        line.start = cursor;
+        for (let i = 0; i < coords.length; i++) {
+          const lng = coords[i][0], lat = coords[i][1];
+          const kx = Math.max(Math.cos(lat * RAD), 0.01);
+          const cx = Math.round(lng * CELLS_PER_DEG * kx);
+          const cy = Math.round(lat * CELLS_PER_DEG);
+          let node = -1;
+          for (let o = 0; o < 18 && node < 0; o += 2) {
+            let n = head.get((cx + NEIGHBORS[o]) * CELL_ROW + (cy + NEIGHBORS[o + 1]));
+            if (n === undefined) continue;
+            for (; n !== -1; n = next[n]) {
+              const dx = (px[n] - lng) * kx, dy = py[n] - lat;
+              if (dx * dx + dy * dy < SNAP_TOL_DEG2) { node = n; break; }
             }
           }
+          if (node < 0) {
+            if (count === cap) {
+              cap = Math.min(cap * 2, total);
+              const gx = new Float64Array(cap); gx.set(px); px = gx;
+              const gy = new Float64Array(cap); gy.set(py); py = gy;
+              const gn = new Int32Array(cap); gn.set(next); next = gn;
+            }
+            node = count++;
+            px[node] = lng;
+            py[node] = lat;
+            const key = cx * CELL_ROW + cy;
+            const prev = head.get(key);
+            next[node] = prev === undefined ? -1 : prev;
+            head.set(key, node);
+          }
+          nodes[cursor++] = node;
         }
-        const id = pos.push(p) - 1;
-        const key = `${cx},${cy}`;
-        const bucket = cells.get(key);
-        if (bucket) bucket.push(id);
-        else cells.set(key, [id]);
-        return id;
-      };
-      return { snap, pos };
+        line.end = cursor;
+      }
+      return { nodes, px, py };
     }
-    function segmentKey(a, b) {
-      if (a === b) return null;
-      return a < b ? `${a}|${b}` : `${b}|${a}`;
-    }
+
     function countSegments(geojson) {
-      const { snap, pos } = makeSnapper();
-      const lines = extractLines(geojson).map(line => ({
-        count: line.count,
-        nodes: line.coords.map(snap),
-      }));
+      const lines = extractLines(geojson);
+      let total = 0;
+      for (const line of lines) total += line.coords.length;
+      const { nodes, px, py } = snapNodes(lines, total);
+
       const counts = new Map();
       for (const line of lines) {
-        const nodes = line.nodes;
-        for (let i = 1; i < nodes.length; i++) {
-          const k = segmentKey(nodes[i - 1], nodes[i]);
-          if (k) counts.set(k, (counts.get(k) || 0) + line.count);
+        for (let i = line.start + 1; i < line.end; i++) {
+          const a = nodes[i - 1], b = nodes[i];
+          if (a === b) continue;
+          const key = a < b ? a * NODE_ROW + b : b * NODE_ROW + a;
+          counts.set(key, (counts.get(key) || 0) + line.count);
         }
       }
       maxCount = 1;
       for (const c of counts.values()) if (c > maxCount) maxCount = c;
+
       const emitted = new Set();
       const features = [];
       let trackKm = 0, riddenKm = 0;
       for (const line of lines) {
-        const nodes = line.nodes;
         let run = null;
         const flush = () => {
           if (run) features.push({
@@ -470,20 +543,23 @@
           });
           run = null;
         };
-        for (let i = 1; i < nodes.length; i++) {
-          const k = segmentKey(nodes[i - 1], nodes[i]);
-          if (!k || emitted.has(k)) { flush(); continue; }
-          emitted.add(k);
-          const count = counts.get(k);
-          const a = pos[nodes[i - 1]], b = pos[nodes[i]];
-          const len = segLenKm(a, b);
+        for (let i = line.start + 1; i < line.end; i++) {
+          const a = nodes[i - 1], b = nodes[i];
+          if (a === b) { flush(); continue; }
+          const key = a < b ? a * NODE_ROW + b : b * NODE_ROW + a;
+          if (emitted.has(key)) { flush(); continue; }
+          emitted.add(key);
+          const count = counts.get(key);
+          const dx = (px[b] - px[a]) * Math.cos(py[a] * RAD), dy = py[b] - py[a];
+          const len = KM_PER_DEG * Math.sqrt(dx * dx + dy * dy);
           trackKm += len;
           riddenKm += len * count;
+          const end = [px[b], py[b]];
           if (run && run.count === count) {
-            run.coords.push(b);
+            run.coords.push(end);
           } else {
             flush();
-            run = { count, coords: [a, b] };
+            run = { count, coords: [[px[a], py[a]], end] };
           }
         }
         flush();
@@ -499,6 +575,7 @@
       return ['interpolate', ['linear'], ['ln', ['get', 'count']],
         ...ramp().flatMap((c, i) => [i / (ramp().length - 1) * lnMax, c])];
     }
+    const HIT_WIDTH = ['interpolate', ['linear'], ['zoom'], 3, 20, 10, 14, 16, 10];
     function widthExpr() {
       const zoomScaled = (w) => ['interpolate', ['linear'], ['zoom'],
         4, typeof w === 'number' ? w * 0.6 : ['*', w, 0.6],
@@ -507,10 +584,20 @@
       if (isPlain() || maxCount <= 1) return zoomScaled(2.5);
       return zoomScaled(['interpolate', ['linear'], ['ln', ['get', 'count']], 0, 2, Math.log(maxCount), 5]);
     }
+    const TICK_MIN_GAP = 0.13;
     function legendTicks() {
-      const candidates = [1, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000];
-      const ticks = candidates.filter(v => v < maxCount);
-      while (ticks.length && Math.log(maxCount) - Math.log(ticks[ticks.length - 1]) < 0.25) ticks.pop();
+      const lnMax = Math.log(maxCount);
+      if (!(lnMax > 0)) return [maxCount];
+      const candidates = [1, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+      const ticks = [];
+      for (const v of candidates) {
+        if (v >= maxCount) break;
+        const lnV = Math.log(v);
+        const prev = ticks.length ? Math.log(ticks[ticks.length - 1]) : -Infinity;
+        if ((lnV - prev) / lnMax < TICK_MIN_GAP) continue;
+        if ((lnMax - lnV) / lnMax < TICK_MIN_GAP) continue;
+        ticks.push(v);
+      }
       ticks.push(maxCount);
       return ticks;
     }
@@ -523,8 +610,8 @@
     function renderLegend() {
       const legend = document.getElementById('legend');
       legend.innerHTML = '';
-      const displayName = id
-        ? (id.startsWith('@') ? id : 'Trainy Map')
+      const displayName = currentId
+        ? (currentId.startsWith('@') ? currentId : 'Trainy Map')
         : 'Global feed';
       legend.appendChild(makeEl('legend-user', displayName));
       const fmt = (n) => Math.round(n).toLocaleString('en');
@@ -570,7 +657,7 @@
         labels.className = 'legend-labels';
         for (const v of legendTicks()) {
           const tick = document.createElement('span');
-          tick.textContent = `${v}×`;
+          tick.textContent = `${v.toLocaleString('en')}×`;
           tick.style.bottom = `${Math.log(v) / Math.log(maxCount) * 100}%`;
           labels.appendChild(tick);
         }
@@ -619,9 +706,11 @@
       return ['interpolate', ['linear'], ['line-progress'],
         Math.max(tip - head, 0), color, tip, hexToRgba(color, 0)];
     }
+    let animToken = 0;
     function startDrawAnimation(tripsGeojson, duration = 1600) {
       if (!settings.animate) return;
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const token = ++animToken;
       const showRoute = () => {
         try { map.setPaintProperty('route', 'line-opacity', 1); } catch {}
       };
@@ -664,11 +753,12 @@
       }
       let started = false;
       const run = () => {
-        if (started) return;
+        if (started || token !== animToken) return;
         started = true;
         let start = null;
         const ease = (t) => 1 - (1 - t) ** 3;
         const frame = (now) => {
+          if (token !== animToken) return;
           if (start === null) start = now;
           const t = Math.min((now - start) / duration, 1);
           try {
@@ -684,6 +774,7 @@
             return;
           }
           setTimeout(() => {
+            if (token !== animToken) return;
             map.setPaintProperty('route', 'line-opacity-transition', { duration: 500 });
             showRoute();
             for (const k of classes) {
@@ -726,28 +817,19 @@
             'line-width': widthExpr(),
           },
         });
-        startDrawAnimation(geojson);
-        const popup = new maplibregl.Popup({
-          closeButton: false,
-          closeOnClick: false,
-          className: 'count-popup',
+        map.addLayer({
+          id: 'route-hit',
+          type: 'line',
+          source: 'route',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#ffffff',
+            'line-opacity': 0,
+            'line-width': HIT_WIDTH,
+          },
         });
-        map.on('mousemove', 'route', (e) => {
-          map.getCanvas().style.cursor = 'crosshair';
-          const count = e.features[0].properties.count;
-          popup.setLngLat(e.lngLat).setText(`${count}×`).addTo(map);
-          const cursor = document.getElementById('legend-cursor');
-          if (cursor && maxCount > 1) {
-            cursor.style.bottom = `${Math.log(count) / Math.log(maxCount) * 100}%`;
-            cursor.classList.remove('hidden');
-          }
-        });
-        map.on('mouseleave', 'route', () => {
-          map.getCanvas().style.cursor = '';
-          popup.remove();
-          const cursor = document.getElementById('legend-cursor');
-          if (cursor) cursor.classList.add('hidden');
-        });
+        if (currentId) startDrawAnimation(geojson);
+        bindRouteHover();
       }
       renderLegend();
       if (fit) {
@@ -755,10 +837,80 @@
         if (bounds) map.fitBounds(bounds, { padding: 20, animate: true });
       }
     }
+
+    let routeHoverBound = false;
+    function bindRouteHover() {
+      if (routeHoverBound) return;
+      routeHoverBound = true;
+      {
+        const popup = new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          className: 'count-popup',
+        });
+        map.on('mousemove', 'route-hit', (e) => {
+          map.getCanvas().style.cursor = 'crosshair';
+          const count = e.features.reduce((max, f) => Math.max(max, f.properties.count), 0);
+          popup.setLngLat(e.lngLat).setText(`${count}×`).addTo(map);
+          const cursor = document.getElementById('legend-cursor');
+          if (cursor && maxCount > 1) {
+            cursor.style.bottom = `${Math.log(count) / Math.log(maxCount) * 100}%`;
+            cursor.classList.remove('hidden');
+          }
+        });
+        map.on('mouseleave', 'route-hit', () => {
+          map.getCanvas().style.cursor = '';
+          popup.remove();
+          const cursor = document.getElementById('legend-cursor');
+          if (cursor) cursor.classList.add('hidden');
+        });
+      }
+    }
+
+    function clearRoute() {
+      animToken++;
+      const tracers = map.getStyle().layers
+        .map(l => l.id)
+        .filter(id => id.startsWith('route-tracer'));
+      for (const layer of [...tracers, 'route-hit', 'route']) {
+        if (map.getLayer(layer)) map.removeLayer(layer);
+      }
+      for (const source of ['trips', 'route']) {
+        if (map.getSource(source)) map.removeSource(source);
+      }
+      document.getElementById('legend').classList.add('hidden');
+    }
+
+    function profilePath(profileId) {
+      return profileId ? '/' + encodeURIComponent(profileId).replace(/%40/g, '@') : '/';
+    }
+    function setProfile(profileId, push = true) {
+      const next = profileId || null;
+      if (next === currentId) return;
+      currentId = next;
+      syncSearchInput();
+      if (push) history.pushState({ id: next }, '', profilePath(next));
+      clearRoute();
+      loadRoute();
+    }
+    window.addEventListener('popstate', () => {
+      const match = location.pathname.match(/^\/([^/]+)\/?$/);
+      const next = (match ? decodeURIComponent(match[1]) : new URLSearchParams(location.search).get('id')) || null;
+      if (next === currentId) return;
+      currentId = next;
+      syncSearchInput();
+      clearRoute();
+      loadRoute();
+    });
+    let loadSeq = 0;
     async function loadRoute() {
+      const seq = ++loadSeq;
+      showStatus('Loading tracks…');
       try {
-        const url = await resolveUrl(id);
+        const url = await resolveUrl(currentId);
+        if (seq !== loadSeq) return;
         const cachedText = await readPolylineCache(url);
+        if (seq !== loadSeq) return;
         let rendered = false;
         if (cachedText) {
           try {
@@ -771,6 +923,7 @@
           const r = await fetch(url);
           if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
           const text = await r.text();
+          if (seq !== loadSeq) return;
           if (text !== cachedText) {
             renderRoute(JSON.parse(text), !rendered);
             writePolylineCache(url, text);
@@ -782,9 +935,116 @@
           setTimeout(hideStatus, 4000);
         }
       } catch (err) {
+        if (seq !== loadSeq) return;
         showStatus(`Failed to load: ${err.message}`, true);
       }
     }
+
+    const searchEl = document.getElementById('search');
+    const searchInput = searchEl.querySelector('input');
+    const resultsEl = searchEl.querySelector('.results');
+    let searchTimer = null;
+    let searchSeq = 0;
+    let searchItems = [];
+    let activeIndex = -1;
+
+    function syncSearchInput() {
+      searchInput.value = currentId && currentId.startsWith('@') ? currentId : '';
+    }
+    function closeSearch() {
+      searchEl.classList.remove('open');
+      activeIndex = -1;
+    }
+    function setActive(i) {
+      activeIndex = i;
+      const rows = resultsEl.querySelectorAll('.result');
+      rows.forEach((row, n) => row.classList.toggle('active', n === i));
+      if (i >= 0 && rows[i]) rows[i].scrollIntoView({ block: 'nearest' });
+    }
+    function renderResults(items, note) {
+      searchItems = items;
+      resultsEl.innerHTML = '';
+      if (note) resultsEl.appendChild(makeEl('note', note));
+      items.forEach((item, i) => {
+        const row = makeEl('result');
+        row.appendChild(makeEl('name', item.label));
+        if (item.sub) row.appendChild(makeEl('sub', item.sub));
+        row.addEventListener('mouseenter', () => setActive(i));
+        row.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          choose(i);
+        });
+        resultsEl.appendChild(row);
+      });
+      searchEl.classList.add('open');
+      setActive(items.length ? 0 : -1);
+    }
+    function choose(i) {
+      const item = searchItems[i];
+      if (!item) return;
+      if (item.user) cacheUserId(item.user.username, item.user._id);
+      closeSearch();
+      searchInput.blur();
+      setProfile(item.profile);
+      syncSearchInput();
+    }
+    function updateResults() {
+      clearTimeout(searchTimer);
+      const query = searchInput.value.trim().replace(/^@/, '');
+      const seq = ++searchSeq;
+      if (!query) {
+        renderResults([{ label: 'Global feed', sub: 'everyone', profile: null }]);
+        return;
+      }
+      searchTimer = setTimeout(async () => {
+        try {
+          const users = await searchUsers(query);
+          if (seq !== searchSeq) return;
+          if (!users.length) {
+            renderResults([], `No profile for \u201c${query}\u201d`);
+            return;
+          }
+          renderResults(users.slice(0, 8).map(u => ({
+            label: `@${u.username}`,
+            sub: u.displayName || u.name || '',
+            profile: `@${u.username}`,
+            user: u,
+          })));
+        } catch (err) {
+          if (seq !== searchSeq) return;
+          renderResults([], err.message);
+        }
+      }, 220);
+    }
+    searchInput.addEventListener('input', updateResults);
+    searchInput.addEventListener('focus', updateResults);
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!searchItems.length) return;
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setActive((activeIndex + step + searchItems.length) % searchItems.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIndex >= 0) {
+          choose(activeIndex);
+          return;
+        }
+        const query = searchInput.value.trim().replace(/^@/, '');
+        closeSearch();
+        searchInput.blur();
+        setProfile(query ? `@${query}` : null);
+        syncSearchInput();
+      } else if (e.key === 'Escape') {
+        closeSearch();
+        searchInput.blur();
+        syncSearchInput();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!searchEl.contains(e.target)) closeSearch();
+    });
+    syncSearchInput();
   </script>
 </body>
 </html>
