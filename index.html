@@ -941,6 +941,7 @@
     }
 
     const searchEl = document.getElementById('search');
+    searchEl.hidden = searchParams.has('hideSearch');
     const searchInput = searchEl.querySelector('input');
     const resultsEl = searchEl.querySelector('.results');
     let searchTimer = null;
