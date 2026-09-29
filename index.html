@@ -432,14 +432,14 @@
       return Number.isFinite(n) && n > 0 ? n : 1;
     }
 
-    function extractLines(geojson, out = [], count = 1) {
+    function extractLines(geojson, out = [], count = 1, trip = null) {
       if (!geojson) return out;
       switch (geojson.type) {
-        case 'FeatureCollection': geojson.features.forEach(f => extractLines(f, out, count)); break;
-        case 'Feature': extractLines(geojson.geometry, out, featureCount(geojson)); break;
-        case 'GeometryCollection': geojson.geometries.forEach(g => extractLines(g, out, count)); break;
-        case 'LineString': out.push({ coords: geojson.coordinates, count }); break;
-        case 'MultiLineString': geojson.coordinates.forEach(c => out.push({ coords: c, count })); break;
+        case 'FeatureCollection': geojson.features.forEach(f => extractLines(f, out, count, trip)); break;
+        case 'Feature': extractLines(geojson.geometry, out, featureCount(geojson), geojson.properties?.trip ?? null); break;
+        case 'GeometryCollection': geojson.geometries.forEach(g => extractLines(g, out, count, trip)); break;
+        case 'LineString': out.push({ coords: geojson.coordinates, count, trip }); break;
+        case 'MultiLineString': geojson.coordinates.forEach(c => out.push({ coords: c, count, trip })); break;
       }
       return out;
     }
@@ -538,7 +538,7 @@
         const flush = () => {
           if (run) features.push({
             type: 'Feature',
-            properties: { count: run.count },
+            properties: { count: run.count, trip: line.trip },
             geometry: { type: 'LineString', coordinates: run.coords },
           });
           run = null;
@@ -796,6 +796,7 @@
     }
 
     function renderRoute(geojson, fit) {
+      clearRouteHover();
       const segmented = countSegments(geojson);
       if (map.getSource('route')) {
         map.getSource('route').setData(segmented);
@@ -839,6 +840,7 @@
     }
 
     let routeHoverBound = false;
+    let clearRouteHover = () => {};
     function bindRouteHover() {
       if (routeHoverBound) return;
       routeHoverBound = true;
@@ -848,26 +850,44 @@
           closeOnClick: false,
           className: 'count-popup',
         });
+        let hovered = null;
+        const updatePopup = (shiftKey) => {
+          if (!hovered) return;
+          const { count, trip } = hovered;
+          const text = shiftKey ? `${count}× · Trip ID: ${trip ?? 'unavailable'}` : `${count}×`;
+          popup.setLngLat(hovered.lngLat).setText(text).addTo(map);
+        };
         map.on('mousemove', 'route-hit', (e) => {
           map.getCanvas().style.cursor = 'crosshair';
           const count = e.features.reduce((max, f) => Math.max(max, f.properties.count), 0);
-          popup.setLngLat(e.lngLat).setText(`${count}×`).addTo(map);
+          const trip = e.features.find(f => f.properties.trip != null)?.properties.trip;
+          hovered = { lngLat: e.lngLat, count, trip };
+          updatePopup(e.originalEvent.shiftKey);
           const cursor = document.getElementById('legend-cursor');
           if (cursor && maxCount > 1) {
             cursor.style.bottom = `${Math.log(count) / Math.log(maxCount) * 100}%`;
             cursor.classList.remove('hidden');
           }
         });
-        map.on('mouseleave', 'route-hit', () => {
+        clearRouteHover = () => {
+          hovered = null;
           map.getCanvas().style.cursor = '';
           popup.remove();
           const cursor = document.getElementById('legend-cursor');
           if (cursor) cursor.classList.add('hidden');
-        });
+        };
+        map.on('mouseleave', 'route-hit', clearRouteHover);
+        window.addEventListener('blur', clearRouteHover);
+        for (const type of ['keydown', 'keyup']) {
+          window.addEventListener(type, (e) => {
+            if (e.key === 'Shift') updatePopup(e.shiftKey);
+          });
+        }
       }
     }
 
     function clearRoute() {
+      clearRouteHover();
       animToken++;
       const tracers = map.getStyle().layers
         .map(l => l.id)
